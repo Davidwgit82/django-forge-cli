@@ -20,7 +20,7 @@ from pathlib import Path
 import typer
 
 from forge.commands._options import AddOptions
-from forge.core.config_manager import add_to_installed_apps
+from forge.core.config_manager import add_to_installed_apps, add_to_live_dependencies, add_to_local_apps, add_to_test_dependencies
 from forge.core.engine import find_manage_py, run_django_command
 
 # Contenu minimal du urls.py local généré pour chaque nouvelle app
@@ -113,13 +113,13 @@ def _run_startapp(app_name: str, project_root: Path) -> None:
         typer.echo("✗ django startapp a échoué.", err=True)
         raise typer.Exit(code=code)
 
-
+# modifier by david.
 def _register_in_installed_apps(app_name: str, project_root: Path) -> None:
-    """Trouve settings.py et injecte l'app dans INSTALLED_APPS."""
+    """Trouve settings.py et injecte l'app dans LOCAL_APPS."""
     settings_path = _find_settings(project_root)
-    modified = add_to_installed_apps(settings_path, app_name)
+    modified = add_to_local_apps(settings_path, app_name)
     if modified:
-        typer.echo(f"  • '{app_name}' ajouté à INSTALLED_APPS.")
+        typer.echo(f"  • '{app_name}' ajouté à LOCAL_APPS.")
 
 
 def _create_local_urls(app_name: str, project_root: Path) -> None:

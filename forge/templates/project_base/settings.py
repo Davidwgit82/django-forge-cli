@@ -20,6 +20,16 @@ ALLOWED_HOSTS = (
     else ["*"]
 )
 
+# liste personnalisé
+LOCAL_APPS = [
+]
+
+LIVE_DEPENDENCIES = [
+]
+
+DEV_DEPENDENCIES = [
+]
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -27,7 +37,10 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-]
+
+    *LOCAL_APPS, *LIVE_DEPENDENCIES, *DEV_DEPENDENCIES
+
+] 
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",

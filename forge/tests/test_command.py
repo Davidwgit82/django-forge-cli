@@ -68,6 +68,46 @@ def project_tree(tmp_path: Path) -> Path:
     return tmp_path
 
 
+# test de david
+class TestCategorizedApps:
+    """
+    Teste que les apps locales et dépendances sont bien gérées
+    et injectées dans les listes respectives.
+    """
+
+    def test_add_local_app_creates_and_populates_list(self, tmp_path: Path) -> None:
+        from forge.core.config_manager import add_to_local_apps
+
+        # Crée un settings.py avec LOCAL_APPS pour que la fonction puisse l'injecter
+        settings_file = tmp_path / "settings.py"
+        settings_file.write_text("LOCAL_APPS = []\nINSTALLED_APPS = [*LOCAL_APPS]\n", encoding="utf-8")
+
+        # Ajoute une app locale
+        modified = add_to_local_apps(settings_file, "boutique")
+        content = settings_file.read_text()
+
+        assert modified is True
+        assert "LOCAL_APPS" in content
+        assert '"boutique"' in content
+
+    def test_local_app_is_idempotent(self, tmp_path: Path) -> None:
+        from forge.core.config_manager import add_to_local_apps  # <-- Corrigé ici (to_local_apps)
+
+        settings_file = tmp_path / "settings.py"
+        settings_file.write_text("LOCAL_APPS = []\nINSTALLED_APPS = [*LOCAL_APPS]\n", encoding="utf-8")
+
+        # Premier ajout
+        add_to_local_apps(settings_file, "boutique")
+        
+        # Second ajout de la même app
+        modified_again = add_to_local_apps(settings_file, "boutique")
+        
+        content = settings_file.read_text()
+
+        assert modified_again is False
+        assert content.count('"boutique"') == 1
+
+
 # ===========================================================================
 # configure — _find_settings
 # ===========================================================================

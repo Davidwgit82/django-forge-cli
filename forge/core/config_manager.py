@@ -411,3 +411,19 @@ def setting_exists(settings_path: Union[str, Path], key: str) -> bool:
     checker = _SettingExistenceChecker(key)
     module.visit(checker)
     return checker.found
+
+# ---------------------------------------------------------------------------
+# déclaration des applications en constantes et injection dans INSTALLED_APPS
+# ---------------------------------------------------------------------------
+
+def add_to_local_apps(settings_path: Union[str, Path], app_label: str) -> bool:
+    """Ajoute une application locale créée via 'forge add'."""
+    return add_to_list_setting(settings_path, "LOCAL_APPS", app_label)
+
+def add_to_live_dependencies(settings_path: Union[str, Path], package_name: str) -> bool:
+    """Ajoute une dépendance de production/live."""
+    return add_to_list_setting(settings_path, "LIVE_DEPENDENCIES", package_name)
+
+def add_to_test_dependencies(settings_path: Union[str, Path], package_name: str) -> bool:
+    """Ajoute une dépendance de test/dev local."""
+    return add_to_list_setting(settings_path, "DEV_DEPENDENCIES", package_name)

@@ -21,7 +21,7 @@ from pathlib import Path
 import typer
 
 from forge.commands._options import ConfigureOptions, InstallOptions
-from forge.core.config_manager import add_to_installed_apps
+from forge.core.config_manager import add_to_live_dependencies
 from forge.core.dependency_resolver import build_registry, resolve
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
@@ -132,9 +132,9 @@ def _install_single_module(
         shutil.copytree(source_dir, dest_dir, ignore=shutil.ignore_patterns("manifest.json"))
         typer.echo(f"  • '{folder_name}' copié dans le projet.")
 
-    modified = add_to_installed_apps(settings_path, folder_name)
+    modified = add_to_live_dependencies(settings_path, folder_name)
     if modified:
-        typer.echo(f"  • '{folder_name}' ajouté à INSTALLED_APPS.")
+        typer.echo(f"  • '{folder_name}' ajouté à LIVE_DEPENDENCIES.")
 
 
 def _configure_services(services: list[str]) -> None:
