@@ -10,5 +10,8 @@
   "env_required": [
     "SECRET_KEY",
     "JWT_SIGNING_KEY"
+  ],
+  "python_packages": [
+    "pyotp"
   ]
 }
