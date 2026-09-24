@@ -38,6 +38,8 @@ INSTALLED_APPS = [
     "django.contrib.admin",
 ]
 
+ROOT_URLCONF = "myproject.urls"
+
 DEBUG = True
 """
 
@@ -228,6 +230,36 @@ class TestAddHelpers:
         with pytest.raises(FileNotFoundError):
             _find_settings(tmp_path)
 
+    def test_find_main_urls_ignores_decoy_app_urls(self, project_tree: Path) -> None:
+        """
+        Régression : un urls.py d'app locale contenant déjà `urlpatterns`
+        (cas normal juste après `forge add`, avant branchement) ne doit pas
+        être confondu avec le urls.py principal du projet — sinon l'app
+        finit par s'inclure elle-même (boucle infinie).
+        """
+        from forge.commands.add import _find_main_urls
+
+        decoy = project_tree / "blog"
+        decoy.mkdir()
+        (decoy / "urls.py").write_text(
+            'app_name = "blog"\nurlpatterns: list = []\n', encoding="utf-8"
+        )
+
+        result = _find_main_urls(project_tree)
+
+        assert result == project_tree / "myproject" / "urls.py"
+
+    def test_find_main_urls_returns_none_without_root_urlconf(self, tmp_path: Path) -> None:
+        from forge.commands.add import _find_main_urls
+
+        (tmp_path / "manage.py").write_text("# manage.py")
+        pkg = tmp_path / "myproject"
+        pkg.mkdir()
+        (pkg / "settings.py").write_text("DEBUG = True\n", encoding="utf-8")
+        (pkg / "urls.py").write_text("urlpatterns = []\n", encoding="utf-8")
+
+        assert _find_main_urls(tmp_path) is None
+
 
 # ===========================================================================
 # add — _wire_urls_in_project_router
@@ -362,6 +394,26 @@ class TestAddRun:
         mock_cmd.assert_not_called()  # _run_startapp est mocké directement
         settings = (project_tree / "myproject" / "settings.py").read_text()
         assert '"newapp"' in settings
+
+    def test_run_does_not_wire_app_into_its_own_urls(self, project_tree: Path) -> None:
+        """
+        Régression du branchement URL : `forge add blog` créait parfois
+        `blog/urls.py` avec un `include("blog.urls")` pointant sur lui-même
+        (boucle infinie) au lieu de brancher `myproject/urls.py`.
+        """
+        from forge.commands.add import run
+
+        def fake_startapp(app_name, root):
+            (root / app_name).mkdir()
+
+        with patch("forge.commands.add._run_startapp", side_effect=fake_startapp):
+            run("blog", AddOptions(), project_root=project_tree)
+
+        blog_urls = (project_tree / "blog" / "urls.py").read_text()
+        main_urls = (project_tree / "myproject" / "urls.py").read_text()
+
+        assert "blog.urls" not in blog_urls
+        assert 'include("blog.urls"' in main_urls
 
     def test_run_with_no_urls_skips_url_wiring(self, project_tree: Path) -> None:
         from forge.commands.add import run

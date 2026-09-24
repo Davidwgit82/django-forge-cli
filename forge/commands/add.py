@@ -15,6 +15,7 @@ directement en Python et entièrement testable sans CLI.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import typer
@@ -234,14 +235,42 @@ def _find_settings(project_root: Path) -> Path:
     return candidates[0]
 
 
+def _root_urlconf(settings_path: Path) -> str | None:
+    """
+    Extrait la valeur de `ROOT_URLCONF` (ex: `"myproject.urls"`) depuis
+    `settings_path`. Retourne `None` si le réglage est absent ou n'est pas
+    un littéral string simple.
+    """
+    tree = ast.parse(settings_path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "ROOT_URLCONF" for t in node.targets):
+            continue
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            return node.value.value
+    return None
+
+
 def _find_main_urls(project_root: Path) -> Path | None:
     """
-    Cherche le urls.py principal du projet (celui qui contient `urlpatterns`).
-    Retourne `None` si introuvable.
+    Localise le urls.py principal du projet via `ROOT_URLCONF` dans
+    `settings.py`. Retourne `None` si introuvable.
+
+    Une recherche par contenu (`rglob` + "urlpatterns" présent) confondait ce
+    fichier avec le urls.py fraîchement créé pour la nouvelle app (déjà rempli
+    de `urlpatterns: list = []`) ou avec celui d'un module installé comme
+    forge_auth — l'app finissait alors par s'inclure elle-même, provoquant une
+    boucle d'inclusion infinie au chargement des URLs.
     """
-    for candidate in project_root.rglob("urls.py"):
-        if "test" not in candidate.parts and "migrations" not in candidate.parts:
-            content = candidate.read_text(encoding="utf-8")
-            if "urlpatterns" in content:
-                return candidate
-    return None
+    try:
+        settings_path = _find_settings(project_root)
+    except FileNotFoundError:
+        return None
+
+    module_path = _root_urlconf(settings_path)
+    if module_path is None:
+        return None
+
+    urls_path = project_root / Path(*module_path.split(".")).with_suffix(".py")
+    return urls_path if urls_path.is_file() else None
