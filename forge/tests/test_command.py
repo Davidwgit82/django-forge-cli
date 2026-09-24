@@ -329,6 +329,90 @@ class TestCreateLocalUrls:
         content = (project_tree / "myapp" / "urls.py").read_text()
         ast.parse(content)
 
+    def test_with_view_names_generates_routes(self, project_tree: Path) -> None:
+        from forge.commands.add import _create_local_urls
+
+        app_dir = project_tree / "blog"
+        app_dir.mkdir()
+        _create_local_urls("blog", project_tree, view_names=["index", "detail"])
+
+        content = (app_dir / "urls.py").read_text()
+        assert 'path("index/", views.index, name="index")' in content
+        assert 'path("detail/", views.detail, name="detail")' in content
+
+    def test_with_view_names_is_valid_python(self, project_tree: Path) -> None:
+        import ast
+
+        from forge.commands.add import _create_local_urls
+
+        app_dir = project_tree / "blog"
+        app_dir.mkdir()
+        _create_local_urls("blog", project_tree, view_names=["index", "detail"])
+
+        ast.parse((app_dir / "urls.py").read_text())
+
+    def test_empty_view_names_matches_historical_behavior(self, project_tree: Path) -> None:
+        from forge.commands.add import _create_local_urls
+
+        app_dir = project_tree / "blog"
+        app_dir.mkdir()
+        _create_local_urls("blog", project_tree, view_names=[])
+
+        assert "urlpatterns: list = []" in (app_dir / "urls.py").read_text()
+
+
+# ===========================================================================
+# add — _create_view_functions
+# ===========================================================================
+
+
+class TestCreateViewFunctions:
+    def test_appends_view_functions(self, project_tree: Path) -> None:
+        from forge.commands.add import _create_view_functions
+
+        app_dir = project_tree / "blog"
+        app_dir.mkdir()
+        (app_dir / "views.py").write_text(
+            "from django.shortcuts import render\n\n# Create your views here.\n",
+            encoding="utf-8",
+        )
+
+        _create_view_functions("blog", project_tree, ["index", "detail"])
+
+        content = (app_dir / "views.py").read_text()
+        assert "def index(request):" in content
+        assert 'render(request, "blog/index.html")' in content
+        assert "def detail(request):" in content
+        assert 'render(request, "blog/detail.html")' in content
+
+    def test_adds_missing_render_import(self, project_tree: Path) -> None:
+        from forge.commands.add import _create_view_functions
+
+        app_dir = project_tree / "blog"
+        app_dir.mkdir()
+        (app_dir / "views.py").write_text("# Create your views here.\n", encoding="utf-8")
+
+        _create_view_functions("blog", project_tree, ["index"])
+
+        content = (app_dir / "views.py").read_text()
+        assert "from django.shortcuts import render" in content
+
+    def test_result_is_valid_python(self, project_tree: Path) -> None:
+        import ast
+
+        from forge.commands.add import _create_view_functions
+
+        app_dir = project_tree / "blog"
+        app_dir.mkdir()
+        (app_dir / "views.py").write_text(
+            "from django.shortcuts import render\n\n# Create your views here.\n",
+            encoding="utf-8",
+        )
+
+        _create_view_functions("blog", project_tree, ["index", "detail"])
+
+        ast.parse((app_dir / "views.py").read_text())
+
 
 # ===========================================================================
 # add — _create_template_tree
@@ -429,12 +513,60 @@ class TestAddRun:
     def test_run_with_templates_creates_tree(self, project_tree: Path) -> None:
         from forge.commands.add import run
 
-        def fake_startapp(app_name, root):
-            (root / app_name).mkdir()
-
-        with patch("forge.commands.add._run_startapp", side_effect=fake_startapp):
+        with patch(
+            "forge.commands.add._run_startapp", side_effect=self._fake_startapp_with_views
+        ):
             run("blog", AddOptions(templates=["index.html"]), project_root=project_tree)
 
+        assert (project_tree / "blog" / "templates" / "blog" / "index.html").exists()
+
+    def _fake_startapp_with_views(self, app_name, root):
+        """Simule `startapp` en créant aussi views.py, comme le vrai django-admin."""
+        app_dir = root / app_name
+        app_dir.mkdir()
+        (app_dir / "views.py").write_text(
+            "from django.shortcuts import render\n\n# Create your views here.\n",
+            encoding="utf-8",
+        )
+
+    def test_run_with_templates_generates_view_and_route(self, project_tree: Path) -> None:
+        """
+        Point 25 : une page de --templates doit être accessible immédiatement,
+        sans code manuel — vue + route générées automatiquement.
+        """
+        from forge.commands.add import run
+
+        with patch(
+            "forge.commands.add._run_startapp", side_effect=self._fake_startapp_with_views
+        ):
+            run("blog", AddOptions(templates=["index.html"]), project_root=project_tree)
+
+        views_content = (project_tree / "blog" / "views.py").read_text()
+        urls_content = (project_tree / "blog" / "urls.py").read_text()
+
+        assert "def index(request):" in views_content
+        assert 'render(request, "blog/index.html")' in views_content
+        assert 'path("index/", views.index, name="index")' in urls_content
+
+    def test_run_with_templates_and_no_urls_skips_views_and_routes(
+        self, project_tree: Path
+    ) -> None:
+        """--no-urls désactive tout routage : pas de vue générée non plus."""
+        from forge.commands.add import run
+
+        with patch(
+            "forge.commands.add._run_startapp", side_effect=self._fake_startapp_with_views
+        ):
+            run(
+                "blog",
+                AddOptions(templates=["index.html"], no_urls=True),
+                project_root=project_tree,
+            )
+
+        assert not (project_tree / "blog" / "urls.py").exists()
+        views_content = (project_tree / "blog" / "views.py").read_text()
+        assert "def index(request):" not in views_content
+        # Le fichier HTML, lui, est toujours généré.
         assert (project_tree / "blog" / "templates" / "blog" / "index.html").exists()
 
     def test_run_invalid_name_exits(self, project_tree: Path) -> None:
@@ -569,6 +701,41 @@ class TestInstallDryRun:
             )
 
             assert settings.read_text() == original_content
+
+
+# ===========================================================================
+# init — _create_base_template
+# ===========================================================================
+
+
+class TestCreateBaseTemplate:
+    def test_creates_base_html_at_project_root(self, tmp_path: Path) -> None:
+        """
+        Sans ce fichier, toute page générée par `forge add --templates`
+        (qui fait `{% extends "base.html" %}`) plante au rendu avec un
+        TemplateDoesNotExist — settings.py Forge pointe TEMPLATES[0]["DIRS"]
+        sur `BASE_DIR / "templates"`, donc le fichier doit atterrir là,
+        pas dans le package Django.
+        """
+        from forge.commands.init import _create_base_template
+
+        _create_base_template(tmp_path)
+
+        base_html = tmp_path / "templates" / "base.html"
+        assert base_html.exists()
+        content = base_html.read_text()
+        assert "{% block content %}" in content
+
+    def test_does_not_overwrite_existing_base_html(self, tmp_path: Path) -> None:
+        from forge.commands.init import _create_base_template
+
+        target_dir = tmp_path / "templates"
+        target_dir.mkdir()
+        (target_dir / "base.html").write_text("<!-- custom -->", encoding="utf-8")
+
+        _create_base_template(tmp_path)
+
+        assert (target_dir / "base.html").read_text() == "<!-- custom -->"
 
 
 # ===========================================================================
