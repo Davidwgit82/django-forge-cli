@@ -7,7 +7,8 @@ Responsabilité
 2. Injecter l'app dans `INSTALLED_APPS`.
 3. Créer et brancher `urls.py` dans le routeur principal (sauf `--no-urls`).
 4. Générer l'arborescence `templates/<app_name>/` et les fichiers HTML
-   demandés (option `--templates`).
+   demandés (option `--templates`), ainsi que la vue et la route de chaque
+   page pour qu'elle soit accessible immédiatement (sauf `--no-urls`).
 
 Ce module ne contient aucune référence à Typer — il est appelable
 directement en Python et entièrement testable sans CLI.
@@ -15,6 +16,7 @@ directement en Python et entièrement testable sans CLI.
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import typer
@@ -36,6 +38,21 @@ app_name = "{app_name}"
 urlpatterns: list = []
 '''
 
+# Variante générée quand `--templates` fournit des pages : une route par vue,
+# pour que chaque page soit accessible immédiatement.
+_LOCAL_URLS_WITH_ROUTES_TEMPLATE = '''\
+"""URL configuration for the {app_name} application."""
+
+from django.urls import path
+
+from . import views
+
+app_name = "{app_name}"
+
+urlpatterns: list = [
+{routes}]
+'''
+
 # Snippet d'inclusion injecté dans le urls.py principal du projet
 _URL_INCLUDE_SNIPPET = (
     'path("{app_name}/", include("{app_name}.urls", namespace="{app_name}")),\n'
@@ -49,6 +66,13 @@ _HTML_TEMPLATE = """\
 <h1>{page_title}</h1>
 {{% endblock %}}
 """
+
+# Vue générée pour chaque page de `--templates`, ajoutée à <app_name>/views.py
+_VIEW_FUNCTION_TEMPLATE = '''
+
+def {view_name}(request):
+    return render(request, "{app_name}/{filename}")
+'''
 
 
 # ---------------------------------------------------------------------------
@@ -80,12 +104,22 @@ def run(app_name: str, options: AddOptions, project_root: Path | None = None) ->
     _run_startapp(app_name, root)
     _register_in_installed_apps(app_name, root)
 
+    # Une route + une vue par page ne peuvent être générées que si le
+    # routeur local existe (pas de sens avec --no-urls).
+    view_names = (
+        [_template_stem(f) for f in options.templates]
+        if options.templates and not options.no_urls
+        else []
+    )
+
     if not options.no_urls:
-        _create_local_urls(app_name, root)
+        _create_local_urls(app_name, root, view_names=view_names)
         _wire_urls_in_project_router(app_name, root)
 
     if options.templates is not None:
         _create_template_tree(app_name, root, options.templates)
+        if view_names:
+            _create_view_functions(app_name, root, view_names)
 
     typer.echo(f"✓ Application '{app_name}' créée et configurée.")
 
@@ -122,13 +156,30 @@ def _register_in_installed_apps(app_name: str, project_root: Path) -> None:
         typer.echo(f"  • '{app_name}' ajouté à INSTALLED_APPS.")
 
 
-def _create_local_urls(app_name: str, project_root: Path) -> None:
-    """Génère `<app_name>/urls.py` avec un routeur vide nommé."""
+def _create_local_urls(
+    app_name: str,
+    project_root: Path,
+    view_names: list[str] | None = None,
+) -> None:
+    """
+    Génère `<app_name>/urls.py`.
+
+    Sans `view_names` : routeur vide nommé (comportement historique).
+    Avec `view_names` : une route `path("<nom>/", views.<nom>, name="<nom>")`
+    par vue, pour que chaque page de `--templates` soit accessible
+    immédiatement.
+    """
     urls_path = project_root / app_name / "urls.py"
-    urls_path.write_text(
-        _LOCAL_URLS_TEMPLATE.format(app_name=app_name),
-        encoding="utf-8",
-    )
+
+    if view_names:
+        routes = "".join(
+            f'    path("{name}/", views.{name}, name="{name}"),\n' for name in view_names
+        )
+        content = _LOCAL_URLS_WITH_ROUTES_TEMPLATE.format(app_name=app_name, routes=routes)
+    else:
+        content = _LOCAL_URLS_TEMPLATE.format(app_name=app_name)
+
+    urls_path.write_text(content, encoding="utf-8")
     typer.echo(f"  • {app_name}/urls.py créé.")
 
 
@@ -190,6 +241,11 @@ def _wire_urls_in_project_router(app_name: str, project_root: Path) -> None:
     typer.echo(f"  • {app_name}.urls branché dans le routeur principal.")
 
 
+def _template_stem(filename: str) -> str:
+    """Nom de fichier sans extension `.html` (ajoutée si absente)."""
+    return filename[:-len(".html")] if filename.endswith(".html") else filename
+
+
 def _create_template_tree(
     app_name: str,
     project_root: Path,
@@ -204,15 +260,35 @@ def _create_template_tree(
     template_dir.mkdir(parents=True, exist_ok=True)
     typer.echo(f"  • Arborescence templates/{app_name}/ créée.")
 
-    for filename in html_files:
-        if not filename.endswith(".html"):
-            filename = filename + ".html"
-        page_title = filename.replace(".html", "").replace("_", " ").title()
+    for raw_name in html_files:
+        stem = _template_stem(raw_name)
+        filename = f"{stem}.html"
+        page_title = stem.replace("_", " ").title()
         (template_dir / filename).write_text(
             _HTML_TEMPLATE.format(page_title=page_title),
             encoding="utf-8",
         )
         typer.echo(f"  • templates/{app_name}/{filename} généré.")
+
+
+def _create_view_functions(app_name: str, project_root: Path, view_names: list[str]) -> None:
+    """
+    Ajoute une fonction de vue par page de `--templates` dans
+    `<app_name>/views.py` (route déjà créée par `_create_local_urls`).
+    """
+    views_path = project_root / app_name / "views.py"
+    content = views_path.read_text(encoding="utf-8")
+
+    if "from django.shortcuts import render" not in content:
+        content = "from django.shortcuts import render\n\n" + content
+
+    for name in view_names:
+        content += _VIEW_FUNCTION_TEMPLATE.format(
+            view_name=name, app_name=app_name, filename=f"{name}.html"
+        )
+
+    views_path.write_text(content, encoding="utf-8")
+    typer.echo(f"  • Vues générées dans {app_name}/views.py.")
 
 
 # ---------------------------------------------------------------------------
@@ -234,14 +310,42 @@ def _find_settings(project_root: Path) -> Path:
     return candidates[0]
 
 
+def _root_urlconf(settings_path: Path) -> str | None:
+    """
+    Extrait la valeur de `ROOT_URLCONF` (ex: `"myproject.urls"`) depuis
+    `settings_path`. Retourne `None` si le réglage est absent ou n'est pas
+    un littéral string simple.
+    """
+    tree = ast.parse(settings_path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "ROOT_URLCONF" for t in node.targets):
+            continue
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            return node.value.value
+    return None
+
+
 def _find_main_urls(project_root: Path) -> Path | None:
     """
-    Cherche le urls.py principal du projet (celui qui contient `urlpatterns`).
-    Retourne `None` si introuvable.
+    Localise le urls.py principal du projet via `ROOT_URLCONF` dans
+    `settings.py`. Retourne `None` si introuvable.
+
+    Une recherche par contenu (`rglob` + "urlpatterns" présent) confondait ce
+    fichier avec le urls.py fraîchement créé pour la nouvelle app (déjà rempli
+    de `urlpatterns: list = []`) ou avec celui d'un module installé comme
+    forge_auth — l'app finissait alors par s'inclure elle-même, provoquant une
+    boucle d'inclusion infinie au chargement des URLs.
     """
-    for candidate in project_root.rglob("urls.py"):
-        if "test" not in candidate.parts and "migrations" not in candidate.parts:
-            content = candidate.read_text(encoding="utf-8")
-            if "urlpatterns" in content:
-                return candidate
-    return None
+    try:
+        settings_path = _find_settings(project_root)
+    except FileNotFoundError:
+        return None
+
+    module_path = _root_urlconf(settings_path)
+    if module_path is None:
+        return None
+
+    urls_path = project_root / Path(*module_path.split(".")).with_suffix(".py")
+    return urls_path if urls_path.is_file() else None

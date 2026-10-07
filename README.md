@@ -159,7 +159,7 @@ forge add <app_name>
 
 - `--no-urls` : Désactive la création automatique et le branchement du fichier `urls.py`.
 - `--templates` : Crée l'arborescence standard `app_name/templates/app_name/`.
-- `--templates=index.html,detail.html` : Crée l'arborescence et génère les fichiers HTML spécifiés (séparés par des virgules).
+- `--templates=index.html,detail.html` : Crée l'arborescence, génère les fichiers HTML spécifiés (séparés par des virgules) ainsi qu'une vue et une route par page dans `views.py`/`urls.py` — chaque page est accessible immédiatement (ex : `/app_name/index/`), sans code à écrire. Chaque page générée étend `templates/base.html` (créé à la racine du projet par `forge init`). Sans effet combiné à `--no-urls` (pas de routeur local à brancher).
 
 ### 3. Installation de modules réutilisables
 
