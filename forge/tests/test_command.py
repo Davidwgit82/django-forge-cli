@@ -569,114 +569,67 @@ class TestInitRun:
 
 
 # ===========================================================================
-# main() — routage du passe-plat Django
+# init — page d'accueil d'onboarding
 # ===========================================================================
 
 
-class TestDevEngine:
-    """Résolution du moteur de base de données pour l'option --dev."""
+def _load_welcome_module():
+    """Charge project_base/welcome.py comme module isolé (fichier gabarit)."""
+    import importlib.util
 
-    def test_sqlite_alias_maps_to_sqlite3(self) -> None:
-        from forge.commands.configure import _dev_engine
+    from forge.commands.init import _PROJECT_BASE_DIR
 
-        assert _dev_engine("sqlite") == "django.db.backends.sqlite3"
-
-    def test_sqlite3_is_stable(self) -> None:
-        from forge.commands.configure import _dev_engine
-
-        assert _dev_engine("sqlite3") == "django.db.backends.sqlite3"
-
-    def test_unknown_service_falls_back_to_backends_path(self) -> None:
-        from forge.commands.configure import _dev_engine
-
-        assert _dev_engine("oracle") == "django.db.backends.oracle"
+    spec = importlib.util.spec_from_file_location(
+        "forge_welcome_mod", _PROJECT_BASE_DIR / "welcome.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-class TestPassthroughRouting:
-    """main() : commandes Forge → app Typer ; commandes inconnues → manage.py."""
+class TestWelcomePage:
+    def test_welcome_template_is_branded(self) -> None:
+        from forge.commands.init import _PROJECT_BASE_DIR
 
-    FORGE = {"init", "add", "install", "configure"}
+        content = (_PROJECT_BASE_DIR / "welcome.py").read_text(encoding="utf-8")
+        assert "Django Forge" in content
+        assert "github.com/alzeph/django-forge-cli" in content
+        assert "settings.DEBUG" in content  # garde-fou DEBUG présent
 
-    def test_command_names_derived_from_app(self) -> None:
-        from forge.main import _forge_command_names
+    def test_urls_wires_welcome_at_root(self) -> None:
+        from forge.commands.init import _PROJECT_BASE_DIR
 
-        assert self.FORGE <= _forge_command_names()
+        urls = (_PROJECT_BASE_DIR / "urls.py").read_text(encoding="utf-8")
+        assert "forge_welcome" in urls
+        assert 'path("", forge_welcome' in urls
 
-    def test_unknown_command_delegates_to_django(self) -> None:
-        from forge import main as m
+    def test_overlay_copies_and_personalizes_welcome(self, tmp_path: Path) -> None:
+        from forge.commands.init import _apply_forge_settings_overlay
 
-        with patch.object(m, "_forge_command_names", return_value=self.FORGE), patch.object(
-            m, "app"
-        ) as app_mock, patch(
-            "forge.core.engine.run_django_command", return_value=0
-        ) as run_dj, patch.object(
-            m.sys, "argv", ["forge", "migrate", "--noinput"]
-        ):
-            with pytest.raises(SystemExit) as exc_info:
-                m.main()
+        (tmp_path / "proj").mkdir()
+        _apply_forge_settings_overlay(tmp_path, "proj")
 
-        assert exc_info.value.code == 0
-        run_dj.assert_called_once_with(["migrate", "--noinput"])
-        app_mock.assert_not_called()
+        welcome = tmp_path / "proj" / "welcome.py"
+        assert welcome.is_file()
+        content = welcome.read_text(encoding="utf-8")
+        assert "{{project_name}}" not in content  # token substitué
+        assert "proj" in content
 
-    def test_django_returncode_is_propagated(self) -> None:
-        from forge import main as m
 
-        with patch.object(m, "_forge_command_names", return_value=self.FORGE), patch.object(
-            m, "app"
-        ), patch("forge.core.engine.run_django_command", return_value=3), patch.object(
-            m.sys, "argv", ["forge", "migrate"]
-        ):
-            with pytest.raises(SystemExit) as exc_info:
-                m.main()
+class TestWelcomeView:
+    def test_returns_page_in_debug(self, settings) -> None:
+        from django.test import RequestFactory
 
-        assert exc_info.value.code == 3
+        settings.DEBUG = True
+        module = _load_welcome_module()
+        response = module.forge_welcome(RequestFactory().get("/"))
+        assert response.status_code == 200
+        assert b"Django Forge" in response.content
 
-    def test_forge_command_uses_typer_app(self) -> None:
-        from forge import main as m
+    def test_returns_404_when_not_debug(self, settings) -> None:
+        from django.test import RequestFactory
 
-        with patch.object(m, "_forge_command_names", return_value=self.FORGE), patch.object(
-            m, "app"
-        ) as app_mock, patch(
-            "forge.core.engine.run_django_command"
-        ) as run_dj, patch.object(
-            m.sys, "argv", ["forge", "init", "myproj"]
-        ):
-            m.main()
-
-        app_mock.assert_called_once_with()
-        run_dj.assert_not_called()
-
-    def test_no_args_uses_typer_app(self) -> None:
-        from forge import main as m
-
-        with patch.object(m, "app") as app_mock, patch.object(m.sys, "argv", ["forge"]):
-            m.main()
-
-        app_mock.assert_called_once_with()
-
-    def test_global_option_uses_typer_app(self) -> None:
-        from forge import main as m
-
-        with patch.object(m, "app") as app_mock, patch.object(
-            m.sys, "argv", ["forge", "--help"]
-        ):
-            m.main()
-
-        app_mock.assert_called_once_with()
-
-    def test_missing_manage_py_exits_1(self) -> None:
-        from forge import main as m
-
-        with patch.object(m, "_forge_command_names", return_value=self.FORGE), patch.object(
-            m, "app"
-        ), patch(
-            "forge.core.engine.run_django_command",
-            side_effect=FileNotFoundError("manage.py introuvable"),
-        ), patch.object(
-            m.sys, "argv", ["forge", "migrate"]
-        ):
-            with pytest.raises(SystemExit) as exc_info:
-                m.main()
-
-        assert exc_info.value.code == 1
+        settings.DEBUG = False
+        module = _load_welcome_module()
+        response = module.forge_welcome(RequestFactory().get("/"))
+        assert response.status_code == 404
