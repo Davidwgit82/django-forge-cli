@@ -151,7 +151,10 @@ class TestConfigureHandlers:
         _configure_pgsql(s, ConfigureOptions(dev="sqlite"))
         content = s.read_text()
         assert "if DEBUG" in content
-        assert "sqlite" in content
+        # Le backend SQLite de Django s'appelle "sqlite3", pas "sqlite" :
+        # une config avec "django.db.backends.sqlite" lève ImproperlyConfigured.
+        assert '"django.db.backends.sqlite3"' in content
+        assert '"django.db.backends.sqlite"' not in content
         assert "postgresql" in content
 
     def test_pgsql_with_postgis(self, tmp_path: Path) -> None:
@@ -175,7 +178,9 @@ class TestConfigureHandlers:
         _configure_mysql(s, ConfigureOptions(dev="sqlite"))
         content = s.read_text()
         assert "if DEBUG" in content
-        assert "sqlite" in content
+        # Idem : le moteur DEBUG doit être "sqlite3", pas "sqlite".
+        assert '"django.db.backends.sqlite3"' in content
+        assert '"django.db.backends.sqlite"' not in content
 
     def test_channels_injects_block(self, tmp_path: Path) -> None:
         from forge.commands.configure import _configure_channels
