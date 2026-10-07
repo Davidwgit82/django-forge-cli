@@ -569,67 +569,40 @@ class TestInitRun:
 
 
 # ===========================================================================
-# init — page d'accueil d'onboarding
+# install — application des settings & transmission de la racine
 # ===========================================================================
 
 
-def _load_welcome_module():
-    """Charge project_base/welcome.py comme module isolé (fichier gabarit)."""
-    import importlib.util
+class TestInstallSettingsAndRoot:
+    def test_apply_settings_writes_new_key(self, tmp_path: Path) -> None:
+        from forge.commands.install import _apply_settings
 
-    from forge.commands.init import _PROJECT_BASE_DIR
+        s = tmp_path / "settings.py"
+        s.write_text("DEBUG = True\n", encoding="utf-8")
 
-    spec = importlib.util.spec_from_file_location(
-        "forge_welcome_mod", _PROJECT_BASE_DIR / "welcome.py"
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+        _apply_settings({"AUTH_USER_MODEL": "forge_auth.User"}, s)
 
+        content = s.read_text()
+        assert "AUTH_USER_MODEL" in content
+        assert "forge_auth.User" in content
 
-class TestWelcomePage:
-    def test_welcome_template_is_branded(self) -> None:
-        from forge.commands.init import _PROJECT_BASE_DIR
+    def test_apply_settings_does_not_overwrite_existing(self, tmp_path: Path) -> None:
+        from forge.commands.install import _apply_settings
 
-        content = (_PROJECT_BASE_DIR / "welcome.py").read_text(encoding="utf-8")
-        assert "Django Forge" in content
-        assert "github.com/alzeph/django-forge-cli" in content
-        assert "settings.DEBUG" in content  # garde-fou DEBUG présent
+        s = tmp_path / "settings.py"
+        s.write_text('AUTH_USER_MODEL = "existing.User"\n', encoding="utf-8")
 
-    def test_urls_wires_welcome_at_root(self) -> None:
-        from forge.commands.init import _PROJECT_BASE_DIR
+        _apply_settings({"AUTH_USER_MODEL": "forge_auth.User"}, s)
 
-        urls = (_PROJECT_BASE_DIR / "urls.py").read_text(encoding="utf-8")
-        assert "forge_welcome" in urls
-        assert 'path("", forge_welcome' in urls
+        content = s.read_text()
+        assert content.count("AUTH_USER_MODEL") == 1
+        assert "existing.User" in content
 
-    def test_overlay_copies_and_personalizes_welcome(self, tmp_path: Path) -> None:
-        from forge.commands.init import _apply_forge_settings_overlay
+    def test_configure_services_forwards_project_root(self, tmp_path: Path) -> None:
+        from forge.commands.install import _configure_services
 
-        (tmp_path / "proj").mkdir()
-        _apply_forge_settings_overlay(tmp_path, "proj")
+        with patch("forge.commands.configure.run") as configure_run:
+            _configure_services(["redis"], tmp_path)
 
-        welcome = tmp_path / "proj" / "welcome.py"
-        assert welcome.is_file()
-        content = welcome.read_text(encoding="utf-8")
-        assert "{{project_name}}" not in content  # token substitué
-        assert "proj" in content
-
-
-class TestWelcomeView:
-    def test_returns_page_in_debug(self, settings) -> None:
-        from django.test import RequestFactory
-
-        settings.DEBUG = True
-        module = _load_welcome_module()
-        response = module.forge_welcome(RequestFactory().get("/"))
-        assert response.status_code == 200
-        assert b"Django Forge" in response.content
-
-    def test_returns_404_when_not_debug(self, settings) -> None:
-        from django.test import RequestFactory
-
-        settings.DEBUG = False
-        module = _load_welcome_module()
-        response = module.forge_welcome(RequestFactory().get("/"))
-        assert response.status_code == 404
+        assert configure_run.call_count == 1
+        assert configure_run.call_args.kwargs["project_root"] == tmp_path
