@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
-forge = "forge.main:app"
+forge = "forge.main:main"
 
 [build-system]
 requires = ["hatchling"]
