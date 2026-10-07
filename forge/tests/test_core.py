@@ -328,6 +328,16 @@ class TestManifest:
         m = Manifest.from_json(p)
         assert m.name == "forge-test"
 
+    def test_settings_default_empty(self) -> None:
+        m = Manifest.from_dict({"name": "forge-test"})
+        assert m.settings == {}
+
+    def test_from_dict_parses_settings(self) -> None:
+        m = Manifest.from_dict(
+            {"name": "forge-auth", "settings": {"AUTH_USER_MODEL": "forge_auth.User"}}
+        )
+        assert m.settings == {"AUTH_USER_MODEL": "forge_auth.User"}
+
 
 # ===========================================================================
 # dependency_resolver — resolve

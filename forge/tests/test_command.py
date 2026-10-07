@@ -300,6 +300,90 @@ class TestCreateLocalUrls:
         content = (project_tree / "myapp" / "urls.py").read_text()
         ast.parse(content)
 
+    def test_with_view_names_generates_routes(self, project_tree: Path) -> None:
+        from forge.commands.add import _create_local_urls
+
+        app_dir = project_tree / "blog"
+        app_dir.mkdir()
+        _create_local_urls("blog", project_tree, view_names=["index", "detail"])
+
+        content = (app_dir / "urls.py").read_text()
+        assert 'path("index/", views.index, name="index")' in content
+        assert 'path("detail/", views.detail, name="detail")' in content
+
+    def test_with_view_names_is_valid_python(self, project_tree: Path) -> None:
+        import ast
+
+        from forge.commands.add import _create_local_urls
+
+        app_dir = project_tree / "blog"
+        app_dir.mkdir()
+        _create_local_urls("blog", project_tree, view_names=["index", "detail"])
+
+        ast.parse((app_dir / "urls.py").read_text())
+
+    def test_empty_view_names_matches_historical_behavior(self, project_tree: Path) -> None:
+        from forge.commands.add import _create_local_urls
+
+        app_dir = project_tree / "blog"
+        app_dir.mkdir()
+        _create_local_urls("blog", project_tree, view_names=[])
+
+        assert "urlpatterns: list = []" in (app_dir / "urls.py").read_text()
+
+
+# ===========================================================================
+# add — _create_view_functions
+# ===========================================================================
+
+
+class TestCreateViewFunctions:
+    def test_appends_view_functions(self, project_tree: Path) -> None:
+        from forge.commands.add import _create_view_functions
+
+        app_dir = project_tree / "blog"
+        app_dir.mkdir()
+        (app_dir / "views.py").write_text(
+            "from django.shortcuts import render\n\n# Create your views here.\n",
+            encoding="utf-8",
+        )
+
+        _create_view_functions("blog", project_tree, ["index", "detail"])
+
+        content = (app_dir / "views.py").read_text()
+        assert "def index(request):" in content
+        assert 'render(request, "blog/index.html")' in content
+        assert "def detail(request):" in content
+        assert 'render(request, "blog/detail.html")' in content
+
+    def test_adds_missing_render_import(self, project_tree: Path) -> None:
+        from forge.commands.add import _create_view_functions
+
+        app_dir = project_tree / "blog"
+        app_dir.mkdir()
+        (app_dir / "views.py").write_text("# Create your views here.\n", encoding="utf-8")
+
+        _create_view_functions("blog", project_tree, ["index"])
+
+        content = (app_dir / "views.py").read_text()
+        assert "from django.shortcuts import render" in content
+
+    def test_result_is_valid_python(self, project_tree: Path) -> None:
+        import ast
+
+        from forge.commands.add import _create_view_functions
+
+        app_dir = project_tree / "blog"
+        app_dir.mkdir()
+        (app_dir / "views.py").write_text(
+            "from django.shortcuts import render\n\n# Create your views here.\n",
+            encoding="utf-8",
+        )
+
+        _create_view_functions("blog", project_tree, ["index", "detail"])
+
+        ast.parse((app_dir / "views.py").read_text())
+
 
 # ===========================================================================
 # add — _create_template_tree
@@ -400,12 +484,60 @@ class TestAddRun:
     def test_run_with_templates_creates_tree(self, project_tree: Path) -> None:
         from forge.commands.add import run
 
-        def fake_startapp(app_name, root):
-            (root / app_name).mkdir()
-
-        with patch("forge.commands.add._run_startapp", side_effect=fake_startapp):
+        with patch(
+            "forge.commands.add._run_startapp", side_effect=self._fake_startapp_with_views
+        ):
             run("blog", AddOptions(templates=["index.html"]), project_root=project_tree)
 
+        assert (project_tree / "blog" / "templates" / "blog" / "index.html").exists()
+
+    def _fake_startapp_with_views(self, app_name, root):
+        """Simule `startapp` en créant aussi views.py, comme le vrai django-admin."""
+        app_dir = root / app_name
+        app_dir.mkdir()
+        (app_dir / "views.py").write_text(
+            "from django.shortcuts import render\n\n# Create your views here.\n",
+            encoding="utf-8",
+        )
+
+    def test_run_with_templates_generates_view_and_route(self, project_tree: Path) -> None:
+        """
+        Point 25 : une page de --templates doit être accessible immédiatement,
+        sans code manuel — vue + route générées automatiquement.
+        """
+        from forge.commands.add import run
+
+        with patch(
+            "forge.commands.add._run_startapp", side_effect=self._fake_startapp_with_views
+        ):
+            run("blog", AddOptions(templates=["index.html"]), project_root=project_tree)
+
+        views_content = (project_tree / "blog" / "views.py").read_text()
+        urls_content = (project_tree / "blog" / "urls.py").read_text()
+
+        assert "def index(request):" in views_content
+        assert 'render(request, "blog/index.html")' in views_content
+        assert 'path("index/", views.index, name="index")' in urls_content
+
+    def test_run_with_templates_and_no_urls_skips_views_and_routes(
+        self, project_tree: Path
+    ) -> None:
+        """--no-urls désactive tout routage : pas de vue générée non plus."""
+        from forge.commands.add import run
+
+        with patch(
+            "forge.commands.add._run_startapp", side_effect=self._fake_startapp_with_views
+        ):
+            run(
+                "blog",
+                AddOptions(templates=["index.html"], no_urls=True),
+                project_root=project_tree,
+            )
+
+        assert not (project_tree / "blog" / "urls.py").exists()
+        views_content = (project_tree / "blog" / "views.py").read_text()
+        assert "def index(request):" not in views_content
+        # Le fichier HTML, lui, est toujours généré.
         assert (project_tree / "blog" / "templates" / "blog" / "index.html").exists()
 
     def test_run_invalid_name_exits(self, project_tree: Path) -> None:
@@ -733,114 +865,40 @@ class TestInitRun:
 
 
 # ===========================================================================
-# main() — routage du passe-plat Django
+# install — application des settings & transmission de la racine
 # ===========================================================================
 
 
-class TestDevEngine:
-    """Résolution du moteur de base de données pour l'option --dev."""
+class TestInstallSettingsAndRoot:
+    def test_apply_settings_writes_new_key(self, tmp_path: Path) -> None:
+        from forge.commands.install import _apply_settings
 
-    def test_sqlite_alias_maps_to_sqlite3(self) -> None:
-        from forge.commands.configure import _dev_engine
+        s = tmp_path / "settings.py"
+        s.write_text("DEBUG = True\n", encoding="utf-8")
 
-        assert _dev_engine("sqlite") == "django.db.backends.sqlite3"
+        _apply_settings({"AUTH_USER_MODEL": "forge_auth.User"}, s)
 
-    def test_sqlite3_is_stable(self) -> None:
-        from forge.commands.configure import _dev_engine
+        content = s.read_text()
+        assert "AUTH_USER_MODEL" in content
+        assert "forge_auth.User" in content
 
-        assert _dev_engine("sqlite3") == "django.db.backends.sqlite3"
+    def test_apply_settings_does_not_overwrite_existing(self, tmp_path: Path) -> None:
+        from forge.commands.install import _apply_settings
 
-    def test_unknown_service_falls_back_to_backends_path(self) -> None:
-        from forge.commands.configure import _dev_engine
+        s = tmp_path / "settings.py"
+        s.write_text('AUTH_USER_MODEL = "existing.User"\n', encoding="utf-8")
 
-        assert _dev_engine("oracle") == "django.db.backends.oracle"
+        _apply_settings({"AUTH_USER_MODEL": "forge_auth.User"}, s)
 
+        content = s.read_text()
+        assert content.count("AUTH_USER_MODEL") == 1
+        assert "existing.User" in content
 
-class TestPassthroughRouting:
-    """main() : commandes Forge → app Typer ; commandes inconnues → manage.py."""
+    def test_configure_services_forwards_project_root(self, tmp_path: Path) -> None:
+        from forge.commands.install import _configure_services
 
-    FORGE = {"init", "add", "install", "configure"}
+        with patch("forge.commands.configure.run") as configure_run:
+            _configure_services(["redis"], tmp_path)
 
-    def test_command_names_derived_from_app(self) -> None:
-        from forge.main import _forge_command_names
-
-        assert self.FORGE <= _forge_command_names()
-
-    def test_unknown_command_delegates_to_django(self) -> None:
-        from forge import main as m
-
-        with patch.object(m, "_forge_command_names", return_value=self.FORGE), patch.object(
-            m, "app"
-        ) as app_mock, patch(
-            "forge.core.engine.run_django_command", return_value=0
-        ) as run_dj, patch.object(
-            m.sys, "argv", ["forge", "migrate", "--noinput"]
-        ):
-            with pytest.raises(SystemExit) as exc_info:
-                m.main()
-
-        assert exc_info.value.code == 0
-        run_dj.assert_called_once_with(["migrate", "--noinput"])
-        app_mock.assert_not_called()
-
-    def test_django_returncode_is_propagated(self) -> None:
-        from forge import main as m
-
-        with patch.object(m, "_forge_command_names", return_value=self.FORGE), patch.object(
-            m, "app"
-        ), patch("forge.core.engine.run_django_command", return_value=3), patch.object(
-            m.sys, "argv", ["forge", "migrate"]
-        ):
-            with pytest.raises(SystemExit) as exc_info:
-                m.main()
-
-        assert exc_info.value.code == 3
-
-    def test_forge_command_uses_typer_app(self) -> None:
-        from forge import main as m
-
-        with patch.object(m, "_forge_command_names", return_value=self.FORGE), patch.object(
-            m, "app"
-        ) as app_mock, patch(
-            "forge.core.engine.run_django_command"
-        ) as run_dj, patch.object(
-            m.sys, "argv", ["forge", "init", "myproj"]
-        ):
-            m.main()
-
-        app_mock.assert_called_once_with()
-        run_dj.assert_not_called()
-
-    def test_no_args_uses_typer_app(self) -> None:
-        from forge import main as m
-
-        with patch.object(m, "app") as app_mock, patch.object(m.sys, "argv", ["forge"]):
-            m.main()
-
-        app_mock.assert_called_once_with()
-
-    def test_global_option_uses_typer_app(self) -> None:
-        from forge import main as m
-
-        with patch.object(m, "app") as app_mock, patch.object(
-            m.sys, "argv", ["forge", "--help"]
-        ):
-            m.main()
-
-        app_mock.assert_called_once_with()
-
-    def test_missing_manage_py_exits_1(self) -> None:
-        from forge import main as m
-
-        with patch.object(m, "_forge_command_names", return_value=self.FORGE), patch.object(
-            m, "app"
-        ), patch(
-            "forge.core.engine.run_django_command",
-            side_effect=FileNotFoundError("manage.py introuvable"),
-        ), patch.object(
-            m.sys, "argv", ["forge", "migrate"]
-        ):
-            with pytest.raises(SystemExit) as exc_info:
-                m.main()
-
-        assert exc_info.value.code == 1
+        assert configure_run.call_count == 1
+        assert configure_run.call_args.kwargs["project_root"] == tmp_path

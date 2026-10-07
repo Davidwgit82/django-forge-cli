@@ -104,7 +104,47 @@ forge init <project_name>
 
 #### Options :
 
-- `--install=forge-auth` : Installe et configure une liste de modules réutilisables (séparés par des virgules) dès l'initialisation. Modules fournis en standard : `forge-auth`, `forge-test`.
+- `--install=forge-auth,forge-notification` : Installe et configure une liste d'applications réutilisables dès l'initialisation.
+- `--template=<blueprint>` : Applique un **blueprint de projet** — un preset qui scaffolde un projet complet et pré-configuré en une commande. Voir ci-dessous.
+
+### 1 bis. Blueprints de projet (`--template`)
+
+Un blueprint enchaîne automatiquement la création du projet, des apps, l'installation des modules et la configuration des services, dans un ordre déterministe.
+
+```bash
+forge templates                       # liste les blueprints disponibles
+forge init monshop --template saas    # scaffold complet en une commande
+```
+
+Blueprints fournis :
+
+| Blueprint | Contenu |
+|-----------|---------|
+| `api`  | Django REST Framework + PostgreSQL (SQLite en dev) + app `core`. |
+| `saas` | `forge-auth` (JWT) + DRF + PostgreSQL (SQLite en dev) + Celery + Redis + app `core`. |
+
+**Ajouter son propre blueprint** — dépose un dossier `forge/templates/blueprints/<nom>/blueprint.json` :
+
+```json
+{
+  "name": "saas",
+  "description": "SaaS prêt à coder : auth JWT, DRF, PostgreSQL, Celery + Redis.",
+  "apps": ["core"],
+  "install": ["forge-auth"],
+  "configure": [
+    { "service": "drf" },
+    { "service": "pgsql", "dev": "sqlite" },
+    { "service": "celery" },
+    { "service": "redis" }
+  ]
+}
+```
+
+- `apps` → un `forge add` par entrée ;
+- `install` → un `forge install` par module (dépendances résolues récursivement) ;
+- `configure` → un `forge configure` par service (`postgis` et `dev` optionnels).
+
+Aucun code à écrire : le fichier `blueprint.json` suffit à enregistrer un nouveau template.
 
 ### 2. Création d'application
 
@@ -119,7 +159,7 @@ forge add <app_name>
 
 - `--no-urls` : Désactive la création automatique et le branchement du fichier `urls.py`.
 - `--templates` : Crée l'arborescence standard `app_name/templates/app_name/`.
-- `--templates=index.html,detail.html` : Crée l'arborescence et génère les fichiers HTML spécifiés (séparés par des virgules).
+- `--templates=index.html,detail.html` : Crée l'arborescence, génère les fichiers HTML spécifiés (séparés par des virgules) ainsi qu'une vue et une route par page dans `views.py`/`urls.py` — chaque page est accessible immédiatement (ex : `/app_name/index/`), sans code à écrire. Chaque page générée étend `templates/base.html` (créé à la racine du projet par `forge init`). Sans effet combiné à `--no-urls` (pas de routeur local à brancher).
 
 ### 3. Installation de modules réutilisables
 

@@ -5,7 +5,9 @@ Responsabilité
 --------------
 1. Appeler `django-admin startproject` via le moteur.
 2. Remplacer le `settings.py` généré par le squelette Forge.
-3. Installer les modules passés via `--install` si présents.
+3. Générer `templates/base.html`, que les pages de `forge add --templates`
+   étendent via `{% extends "base.html" %}`.
+4. Installer les modules passés via `--install` si présents.
 
 Ce module ne contient aucune référence à Typer — il est appelable
 directement en Python et entièrement testable sans CLI.
@@ -117,7 +119,7 @@ def _apply_forge_settings_overlay(project_dir: Path, project_name: str) -> None:
     """
     package_dir = project_dir / project_name
 
-    for filename in ("settings.py", "urls.py"):
+    for filename in ("settings.py", "urls.py", "welcome.py"):
         blueprint = _PROJECT_BASE_DIR / filename
         if not blueprint.exists():
             continue
@@ -128,8 +130,33 @@ def _apply_forge_settings_overlay(project_dir: Path, project_name: str) -> None:
         target.write_text(content, encoding="utf-8")
         typer.echo(f"  • {filename} Forge appliqué.")
 
+    _create_base_template(project_dir)
+
     # Créer le .env initial si absent
     _create_initial_dotenv(project_dir)
+
+
+def _create_base_template(project_dir: Path) -> None:
+    """
+    Copie `base.html` à la racine du projet (`<project>/templates/base.html`),
+    là où `TEMPLATES[0]["DIRS"]` du settings.py Forge va le chercher
+    (`BASE_DIR / "templates"`).
+
+    Sans ce fichier, toute page générée par `forge add --templates` (qui fait
+    `{% extends "base.html" %}`) plante au rendu avec un TemplateDoesNotExist.
+    """
+    blueprint = _PROJECT_BASE_DIR / "templates" / "base.html"
+    if not blueprint.exists():
+        return
+
+    target_dir = project_dir / "templates"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / "base.html"
+    if target.exists():
+        return
+
+    target.write_text(blueprint.read_text(encoding="utf-8"), encoding="utf-8")
+    typer.echo("  • templates/base.html Forge appliqué.")
 
 
 def _register_forge_test(project_dir: Path, project_name: str) -> None:
